@@ -3,6 +3,9 @@ package cmd
 import (
 	"errors"
 	"fmt"
+	"io/ioutil"
+	"net/http"
+	"os"
 	"strings"
 
 	openapi_v2 "github.com/googleapis/gnostic/OpenAPIv2"
@@ -20,8 +23,8 @@ type GenerateOptions struct {
 
 	UpstreamSchema *openapi_v2.Document
 
-	LocalSchema     *openapi_v2.Document
-	LocalSchemaPath string
+	CustomSchema     *openapi_v2.Document
+	CustomSchemaPath string
 
 	genericclioptions.IOStreams
 }
@@ -55,7 +58,7 @@ func NewCmdGenerate(streams genericclioptions.IOStreams) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&o.LocalSchemaPath, "schema", "", "Local file to load as example schema")
+	cmd.Flags().StringVar(&o.CustomSchemaPath, "schema", "", "Local file path or URL to load as example schema")
 	o.ConfigFlags.AddFlags(cmd.Flags())
 
 	return cmd
@@ -75,11 +78,11 @@ func (o *GenerateOptions) Complete(cmd *cobra.Command, args []string) error {
 	}
 	o.UpstreamSchema = upstream
 
-	local, err := getLocalSchema()
+	custom, err := getCustomSchema(o.CustomSchemaPath)
 	if err != nil {
 		return err
 	}
-	o.LocalSchema = local
+	o.CustomSchema = custom
 
 	return nil
 }
@@ -94,7 +97,7 @@ func (o *GenerateOptions) Validate() error {
 
 // Run executes the command
 func (o *GenerateOptions) Run() error {
-	schema := mergeSchema(o.LocalSchema, o.UpstreamSchema)
+	schema := mergeSchema(o.CustomSchema, o.UpstreamSchema)
 
 	var item *openapi_v2.NamedSchema
 	for _, i := range schema.GetDefinitions().GetAdditionalProperties() {
@@ -125,8 +128,38 @@ func getUpstreamSchema(o *GenerateOptions) (*openapi_v2.Document, error) {
 	return schema, nil
 }
 
-func getLocalSchema() (*openapi_v2.Document, error) {
-	return openapi_v2.ParseDocument([]byte(LocalSchema))
+// getCustomSchema will parse the schema whether it exists locally or remote
+func getCustomSchema(path string) (*openapi_v2.Document, error) {
+	var schema []byte
+
+	_, err := os.Stat(path)
+
+	if !os.IsNotExist(err) {
+		f, err := os.Open(path)
+		defer f.Close()
+
+		if err != nil {
+			return nil, err
+		}
+
+		schema, err = ioutil.ReadAll(f)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		response, err := http.Get(path)
+		if err != nil {
+			return nil, err
+		}
+		defer response.Body.Close()
+
+		schema, err = ioutil.ReadAll(response.Body)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return openapi_v2.ParseDocument([]byte(schema))
 }
 
 func mergeSchema(local, upstream *openapi_v2.Document) *openapi_v2.Document {
@@ -146,39 +179,3 @@ func mergeSchema(local, upstream *openapi_v2.Document) *openapi_v2.Document {
 
 	return upstream
 }
-
-const LocalSchema = `
-swagger: '2.0'
-info:
-  title: Kubernetes
-  version: v1.17.6
-paths: []
-definitions:
-  io.k8s.config.examples/api.apps.v1.Deployment:
-    description: Deployment enables declarative updates for Pods and ReplicaSets.
-    type: object
-    properties:
-    example: |
-      apiVersion: apps/v1
-      kind: Deployment
-      metadata:
-        # Unique key of the Deployment instance
-        name: deployment-example
-      spec:
-        # 3 Pods should exist at all times.
-        replicas: 3
-        selector:
-          matchLabels:
-            app: nginx
-        template:
-          metadata:
-            labels:
-              # Apply this label to pods and default
-              # the Deployment label selector to this value
-              app: nginx
-          spec:
-            containers:
-            - name: nginx
-              # Run this image
-              image: nginx:1.14
-`
