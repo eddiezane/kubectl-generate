@@ -5,18 +5,22 @@ import (
 	"fmt"
 	"strings"
 
-	openapi_v2 "github.com/googleapis/gnostic/OpenAPIv2"
+	openapi_v2 "github.com/googleapis/gnostic/openapiv2"
 	"github.com/spf13/cobra"
 
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	cmdutil "k8s.io/kubectl/pkg/cmd/util"
+	"k8s.io/kubectl/pkg/explain"
 )
 
 // GenerateOptions encapsulates configuration info
 type GenerateOptions struct {
 	ConfigFlags *genericclioptions.ConfigFlags
+	Factory     cmdutil.Factory
 
 	ResourceName string
+	APIVersion   string
 
 	UpstreamSchema *openapi_v2.Document
 
@@ -56,6 +60,7 @@ func NewCmdGenerate(streams genericclioptions.IOStreams) *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&o.LocalSchemaPath, "schema", "", "Local file to load as example schema")
+	cmd.Flags().StringVar(&o.APIVersion, "api-version", o.APIVersion, "Generate template for particular API version")
 	o.ConfigFlags.AddFlags(cmd.Flags())
 
 	return cmd
@@ -69,7 +74,17 @@ func (o *GenerateOptions) Complete(cmd *cobra.Command, args []string) error {
 	resourceName := strings.ToLower(args[0])
 	o.ResourceName = resourceName
 
-	upstream, err := getUpstreamSchema(o)
+	matchVersionKubeConfigFlags := cmdutil.NewMatchVersionFlags(o.ConfigFlags)
+	o.Factory = cmdutil.NewFactory(matchVersionKubeConfigFlags)
+
+	gvk, err := o.getGVK(o.ResourceName)
+	if err != nil {
+		return err
+	}
+
+  fmt.Println(gvk)
+
+	upstream, err := getUpstreamSchema(o.Factory)
 	if err != nil {
 		return err
 	}
@@ -108,12 +123,36 @@ func (o *GenerateOptions) Run() error {
 	return nil
 }
 
-func getUpstreamSchema(o *GenerateOptions) (*openapi_v2.Document, error) {
-	kubeConfigFlags := genericclioptions.NewConfigFlags(true).WithDeprecatedPasswordFlag()
-	matchVersionKubeConfigFlags := cmdutil.NewMatchVersionFlags(kubeConfigFlags)
-	factory := cmdutil.NewFactory(matchVersionKubeConfigFlags)
+func (o *GenerateOptions) getGVK(name string) (*schema.GroupVersionKind, error) {
+	mapper, err := o.Factory.ToRESTMapper()
 
-	discoveryClient, err := factory.ToDiscoveryClient()
+	fullySpecifiedGVR, _, err := explain.SplitAndParseResourceRequest(name, mapper)
+	if err != nil {
+		return nil, err
+	}
+
+	gvk, _ := mapper.KindFor(fullySpecifiedGVR)
+	if gvk.Empty() {
+		gvk, err = mapper.KindFor(fullySpecifiedGVR.GroupResource().WithVersion(""))
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	apiVersionString := o.APIVersion
+	if len(apiVersionString) != 0 {
+		apiVersion, err := schema.ParseGroupVersion(apiVersionString)
+		if err != nil {
+			return nil, err
+		}
+		gvk = apiVersion.WithKind(gvk.Kind)
+	}
+
+	return &gvk, nil
+}
+
+func getUpstreamSchema(f cmdutil.Factory) (*openapi_v2.Document, error) {
+	discoveryClient, err := f.ToDiscoveryClient()
 	if err != nil {
 		return nil, err
 	}
