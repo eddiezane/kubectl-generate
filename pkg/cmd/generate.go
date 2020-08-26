@@ -78,11 +78,11 @@ func (o *GenerateOptions) Complete(cmd *cobra.Command, args []string) error {
 	}
 	o.UpstreamSchema = upstream
 
-	custom, err := getCustomSchema(o.CustomSchemaPath)
-	if err != nil {
-		return err
-	}
-	o.CustomSchema = custom
+  custom, err := getCustomSchema(o.CustomSchemaPath)
+  if err != nil {
+    return err
+  }
+  o.CustomSchema = custom
 
 	return nil
 }
@@ -130,6 +130,10 @@ func getUpstreamSchema(o *GenerateOptions) (*openapi_v2.Document, error) {
 
 // getCustomSchema will parse the schema whether it exists locally or remote
 func getCustomSchema(path string) (*openapi_v2.Document, error) {
+  if path == "" {
+    return openapi_v2.ParseDocument([]byte(LocalSchema))
+  }
+
 	var schema []byte
 
 	_, err := os.Stat(path)
@@ -159,7 +163,19 @@ func getCustomSchema(path string) (*openapi_v2.Document, error) {
 		}
 	}
 
-	return openapi_v2.ParseDocument([]byte(schema))
+  remote, err := openapi_v2.ParseDocument([]byte(schema))
+  if err != nil {
+    return nil, err
+  }
+
+  local, err := openapi_v2.ParseDocument([]byte(LocalSchema))
+  if err != nil {
+    return nil, err
+  }
+
+  s := mergeSchema(local, remote)
+
+	return s, nil
 }
 
 func mergeSchema(local, upstream *openapi_v2.Document) *openapi_v2.Document {
@@ -179,3 +195,40 @@ func mergeSchema(local, upstream *openapi_v2.Document) *openapi_v2.Document {
 
 	return upstream
 }
+
+
+const LocalSchema = `
+swagger: '2.0'
+info:
+  title: Kubernetes
+  version: v1.17.6
+paths: []
+definitions:
+  io.k8s.config.examples/api.apps.v1.Deployment:
+    description: Deployment enables declarative updates for Pods and ReplicaSets.
+    type: object
+    properties:
+    example: |
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        # Unique key of the Deployment instance
+        name: deployment-example
+      spec:
+        # 3 Pods should exist at all times.
+        replicas: 3
+        selector:
+          matchLabels:
+            app: nginx
+        template:
+          metadata:
+            labels:
+              # Apply this label to pods and default
+              # the Deployment label selector to this value
+              app: nginx
+          spec:
+            containers:
+            - name: nginx
+              # Run this image
+              image: nginx:1.14
+`
