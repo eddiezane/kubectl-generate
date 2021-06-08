@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	openapi_v2 "github.com/googleapis/gnostic/OpenAPIv2"
+	openapi_v2 "github.com/googleapis/gnostic/openapiv2"
 	"github.com/spf13/cobra"
 
 	"k8s.io/cli-runtime/pkg/genericclioptions"
@@ -151,7 +151,7 @@ const LocalSchema = `
 swagger: '2.0'
 info:
   title: Kubernetes
-  version: v1.17.6
+  version: v1.21.1
 paths: []
 definitions:
   io.k8s.config.examples/api.apps.v1.Deployment:
